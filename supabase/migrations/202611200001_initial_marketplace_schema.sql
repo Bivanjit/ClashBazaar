@@ -316,3 +316,63 @@ grant select on public.game_catalogue, public.profiles, public.player_profiles, 
 grant select, insert, update, delete on public.player_profiles, public.clans, public.clan_recruitment, public.coaches, public.coaching_services, public.coaching_bookings, public.base_layouts, public.reviews, public.favourites, public.reports, public.notifications to authenticated;
 grant select, update on public.profiles to authenticated;
 grant select, insert on public.moderation_logs to authenticated;
+
+
+-- Create a public profile for each newly registered Auth user.
+create or replace function app_private.handle_new_user()
+returns trigger language plpgsql security definer
+set search_path = ''
+as $$
+begin
+  insert into public.profiles (id, username, display_name)
+  values (
+    new.id,
+    nullif(new.raw_user_meta_data ->> 'username',''),
+    coalesce(nullif(new.raw_user_meta_data ->> 'display_name',''), split_part(coalesce(new.email,''),'@',1), 'New player')
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+revoke all on function app_private.handle_new_user() from public;
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function app_private.handle_new_user();
+
+-- Private upload bucket; users may upload only into their own top-level folder.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('marketplace-media','marketplace-media',false,10485760,array['image/jpeg','image/png','image/webp'])
+on conflict (id) do nothing;
+
+create policy "owners upload marketplace media"
+on storage.objects for insert to authenticated
+with check (
+  bucket_id = 'marketplace-media'
+  and (storage.foldername(name))[1] = (select auth.uid())::text
+);
+
+create policy "owners read marketplace media"
+on storage.objects for select to authenticated
+using (
+  bucket_id = 'marketplace-media'
+  and (storage.foldername(name))[1] = (select auth.uid())::text
+);
+
+create policy "owners update marketplace media"
+on storage.objects for update to authenticated
+using (
+  bucket_id = 'marketplace-media'
+  and (storage.foldername(name))[1] = (select auth.uid())::text
+)
+with check (
+  bucket_id = 'marketplace-media'
+  and (storage.foldername(name))[1] = (select auth.uid())::text
+);
+
+create policy "owners delete marketplace media"
+on storage.objects for delete to authenticated
+using (
+  bucket_id = 'marketplace-media'
+  and (storage.foldername(name))[1] = (select auth.uid())::text
+);
