@@ -4,6 +4,7 @@ create extension if not exists pgcrypto;
 
 create schema if not exists app_private;
 revoke all on schema app_private from public, anon, authenticated;
+grant usage on schema app_private to authenticated;
 
 create type public.listing_status as enum ('draft','pending_review','published','rejected','archived','sold');
 create type public.price_type as enum ('fixed','negotiable');
